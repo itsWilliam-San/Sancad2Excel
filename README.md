@@ -73,6 +73,13 @@ Para quem esteja desenvolvendo um plugin de extração que funcione perfeitament
 > Então os campos podem mudar de novo, ou até de comportamento no futuro, então por favor verifique sua versão do
 > Flux e desse Plugin para que não tenha problemas.
 
+Problemas Comuns
+---
+Erro `#VALOR!` ou contagens incorretas
+* **Sintoma:** Alguns campos aparecem com o erro `#VALOR!` e as contagens de dados ficam erradas.
+* **Causa:** Conflito nas configurações de região e internacionalização (geralmente na leitura de separadores decimais, como vírgula e ponto, ou formatos de data).
+* **Solução:** Certifique-se de que o seu programa ou o sistema operacional esteja configurado com o padrão regional dos **Estados Unidos (Inglês - EUA)** para a leitura correta do arquivo.
+
 Nota de Desenvolvimento
 ---
 Esse Plugin está sendo desenvolvido para atender os requisitos especificos de uma empresa *GXH*, logo as regras de exportação podem mudar com o tempo.
