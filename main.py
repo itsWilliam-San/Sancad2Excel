@@ -1,62 +1,18 @@
 import os
-import sys
+
 import openpyxl
-import traceback
-from typing import Optional
-from pydantic import BaseModel, Field
+from flux_sdk import Plugin
+from flux_sdk.network import Intermediate, Primary, System
 from openpyxl.worksheet.worksheet import Worksheet
+from pydantic import BaseModel
+
+plugin = Plugin("sancad2excel")
+
 
 # --- MODELOS PYDANTIC ---
-class FunParameters(BaseModel):
-    expessura: float
-
-
-class Pipe(BaseModel):
-    Material: str
-    Length: float = Field(gt=0.0, description="Comprimento deve ser maior que 0 metros")
-    Slope: float
-    Diameter: float = Field(gt=0.0, description="Diametro não pode ser um valor igual a 0")
-
-class Primary(BaseModel):
-    ID: str
-    TerrainLevel: float
-    InvertLevel: float
-    Depth: float = Field(ge=0.0, description="Não é possivel ter profundidade negativa.")
-    UpstreamManholes: Optional[list[str]]  = None
-    DownstreamConnection: Optional[tuple[str, str]]  = None
-    psets: Optional[dict] = None
-
-class Intermediate(BaseModel):
-    ID: str
-    TerrainLevel: float
-    InvertLevel: float
-    Depth: float = Field(ge=0.0, description="Não é possivel ter profundidade negativa.")
-
-class Connection(BaseModel):
-    kind: str
-    InvertLevel: float
-
-class Segment(BaseModel):
-    ID: str
-    connection: Optional[Connection] = Field(default=None, alias="Connection")
-    pipe: Pipe = Field(..., alias="Pipe")
-    Intermediates: Optional[list[str]] = None
-    IntermediateDistance: Optional[float] = None
-
-class System(BaseModel):
-    primary: list[Primary] = Field(..., alias="Primary")
-    Intermediates: Optional[list[Intermediate]] = Field(default=None, alias="Intermediates")
-    Segments: list[Segment]
-
-class Parameters(BaseModel):
+class RunExportXLSVParams(BaseModel):
     network: System
-    parameters: FunParameters
-
-class Message(BaseModel):
-    id: int
-    jsonrpc: str
-    method: str
-    params: Parameters
+    expessura: float
 
 # --- CONFIGURAÇÕES DE EXPORTAÇÃO ---
 TEMPLATE_PATH: str = "./template.xlsx"
@@ -66,6 +22,7 @@ LAST_ROW: int = 39
 
 # --- 1. FUNÇÕES AUXILIARES DE VALIDAÇÃO E CONFIGURAÇÃO ---
 def _load_and_validate_system(system_data: System) -> tuple[System, dict[str, Primary], dict[str, Intermediate]]:
+    plugin.logger.debug(os.path.curdir)
     if not os.path.exists(TEMPLATE_PATH):
         raise FileNotFoundError(f"Arquivo de template não encontrado em: {TEMPLATE_PATH}")
 
@@ -249,14 +206,13 @@ def _process_segment(
 
 
 # --- 4. FUNÇÃO PRINCIPAL (ORQUESTRADORA) ---
-def export_network_to_xlsx(network: System, parameters: Parameters) -> tuple[int, str]:
+def export_network_to_xlsx(network: System, expessura: float) -> int:
     """Orquestra o carregamento, processamento dos segmentos e salvamento de arquivos XLSX individuais por segmento."""
     try:
         system_data, primary_dict, inter_dict = _load_and_validate_system(network)
 
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         total_segments_processed: int = 0
-        last_saved_path = ""
 
         for segment in system_data.Segments:
             wb: openpyxl.Workbook = openpyxl.load_workbook(TEMPLATE_PATH)
@@ -271,46 +227,36 @@ def export_network_to_xlsx(network: System, parameters: Parameters) -> tuple[int
                 primary_dict=primary_dict,
                 inter_dict=inter_dict,
                 ws=ws,
-                expessure=parameters.parameters.expessura
+                expessure=expessura,
             )
 
             output_filename = f"{segment.ID}.xlsx"
             output_path = os.path.join(OUTPUT_DIR, output_filename)
             wb.save(output_path)
-            last_saved_path = output_path
             total_segments_processed += 1
 
-        return total_segments_processed, last_saved_path
+        return total_segments_processed
 
-    except Exception as e:
-        print("[ERROR]", file=sys.stderr)
-        print(traceback.format_exc(), file=sys.stderr)
-        print(e, file=sys.stderr)
-        sys.exit(1)
+    except Exception:
+        plugin.logger.exception("Failed to export data.")
+        return 0
 
-def run_export_xlsv(request: dict):
-    message = Message(**request)
 
-    params = message.params
-
+@plugin.method("export_xlsv")
+def export_xlsv(params: RunExportXLSVParams):
     network: System = params.network
 
-    result = export_network_to_xlsx(network, message.params)
+    result = export_network_to_xlsx(network, params.expessura)
     if not result:
         raise RuntimeError("Falha na geração dos arquivos Excel.")
 
-    seg_count, saved_path = result
-    req_id = request.get("id", 1) if isinstance(request, dict) else 1
+    return f"Arquivo(s) gerado(s) com sucesso. ({result} arquivo(s) de segmentos criados) na pasta {OUTPUT_DIR}"
 
-    return {
-        "jsonrpc": "2.0",
-        "result": {
-            "status": "success",
-            "action": "export_xlsv",
-            "format": "xlsx",
-            "segments_count": seg_count,
-            "openpyxl_version": openpyxl.__version__,
-            "message": f"Arquivos gerados com sucesso ({seg_count} arquivos de segmentos criados) na pasta {OUTPUT_DIR}"
-        },
-        "id": req_id
-    }
+
+def main():
+    plugin.logger.setLevel("DEBUG")
+    plugin.start()
+
+
+if __name__ == "__main__":
+    main()
